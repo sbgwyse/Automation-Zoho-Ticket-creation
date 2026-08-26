@@ -1,0 +1,35 @@
+{
+  "name": "zoho_auto_testing",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:report": "cross-env GENERATE_REPORT=true CREATE_TICKET=false playwright test",
+    "test:only": "cross-env GENERATE_REPORT=false CREATE_TICKET=false playwright test",
+    "test:full": "cross-env GENERATE_REPORT=true CREATE_TICKET=true playwright test",
+    "generate-report": "ts-node generateReport.ts",
+    "create-ticket": "ts-node CreateZohoTicket.ts",
+    "reply-ticket": "ts-node replyToTicket.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "form-data": "^4.0.6",
+    "node-fetch": "^2.7.0",
+    "pdfkit": "^0.19.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.0.1",
+    "@types/node-fetch": "^2.6.13",
+    "@types/pdfkit": "^0.17.6",
+    "cross-env": "^7.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
