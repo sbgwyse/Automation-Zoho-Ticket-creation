@@ -1,107 +1,261 @@
-// zoho-mail.ts
-//
-// Sends the automation report as a standalone email via the Zoho Mail
-// API, reusing the same OAuth access token used for Zoho Desk.
-//
-// Requires these additional vars in your .env:
-//   ZOHO_MAIL_API_DOMAIN   e.g. https://mail.zoho.com  (or your region's domain)
-//   ZOHO_MAIL_ACCOUNT_ID   the mailbox account id the mail is sent from
-//   ZOHO_MAIL_FROM_ADDRESS the "from" address for that account
-//
-// Also make sure the refresh token's OAuth scope includes Zoho Mail
-// send access (e.g. ZohoMail.messages.CREATE) in addition to Desk scopes.
 
+ 
+import 'dotenv/config';
 import fetch from 'node-fetch';
 import * as fs from 'fs';
 import * as path from 'path';
-
-
+import FormData from 'form-data';
+ 
 export async function sendEmailWithReport(
   accessToken: string,
-  toAddress: string,
+  ticketId: string,
+  to: string[],
+  cc: string[],
   subject: string,
   content: string,
   attachmentPaths: string[]
 ) {
-
   const {
-    ZOHO_MAIL_API_DOMAIN,
-    ZOHO_MAIL_ACCOUNT_ID,
-    ZOHO_MAIL_FROM_ADDRESS,
-  } = process.env as any;
-
-  if (!ZOHO_MAIL_API_DOMAIN || !ZOHO_MAIL_ACCOUNT_ID || !ZOHO_MAIL_FROM_ADDRESS) {
-    console.error(
-      'Missing ZOHO_MAIL_API_DOMAIN / ZOHO_MAIL_ACCOUNT_ID / ZOHO_MAIL_FROM_ADDRESS in .env — cannot send email.'
+    ZOHO_API_DOMAIN,
+    ZOHO_ORG_ID,
+  } = process.env;
+ 
+  if (!ZOHO_API_DOMAIN || !ZOHO_ORG_ID) {
+    throw new Error(
+      'Missing ZOHO_API_DOMAIN or ZOHO_ORG_ID in .env'
     );
-    return;
   }
-
-  const attachments: { storeName: string; attachmentPath: string; attachmentName: string }[] = [];
-
+ 
+  if (!to || !to.length) {
+    throw new Error(
+      'sendEmailWithReport called with no TO address'
+    );
+  }
+ 
+  console.log('Sending email...');
+  console.log(`TO: ${to.join(', ')}`);
+  console.log(`CC: ${cc?.join(', ') || '(none)'}`);
+  console.log(`Ticket ID: ${ticketId}`);
+ 
+  // ============================================================
+  // 1. Upload attachments to Zoho Desk
+  // ============================================================
+  //
+  // NOTE: Zoho Desk's /uploads endpoint requires a proper
+  // multipart/form-data request with the file under a field
+  // named "file" — sending the raw bytes as the body with
+  // Content-Type: application/octet-stream (the old approach)
+  // is rejected with "errorType: missing, fieldName: /file"
+  // because Zoho never receives a recognizable form field.
+ 
+  const attachmentIds: string[] = [];
+ 
   for (const filePath of attachmentPaths) {
-
+ 
     if (!fs.existsSync(filePath)) {
-      console.warn(`Report file not found, skipping attachment: ${filePath}`);
+      console.warn(
+        `Report file not found, skipping: ${filePath}`
+      );
       continue;
     }
-
+ 
     const fileName = path.basename(filePath);
-    const fileBuffer = fs.readFileSync(filePath);
-
+ 
+    console.log(
+      `Uploading attachment: ${fileName}`
+    );
+ 
+    const form = new FormData();
+ 
+    form.append(
+      'file',
+      fs.createReadStream(filePath),
+      { filename: fileName }
+    );
+ 
     const uploadRes = await fetch(
-      `${ZOHO_MAIL_API_DOMAIN}/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/attachments?fileName=${encodeURIComponent(fileName)}`,
+      `${ZOHO_API_DOMAIN}/api/v1/uploads`,
       {
         method: 'POST',
+ 
         headers: {
-          Authorization: `Zoho-oauthtoken ${accessToken}`,
-          'Content-Type': 'application/octet-stream',
+          Authorization:
+            `Zoho-oauthtoken ${accessToken}`,
+ 
+          'X-com-zoho-desk-organizationid':
+            ZOHO_ORG_ID,
+ 
+          ...form.getHeaders(),
         },
-        body: fileBuffer,
+ 
+        body: form as any,
       }
     );
-
-    const uploadData: any = await uploadRes.json();
-    const info = uploadData?.data;
-
-    if (!uploadRes.ok || !info) {
-      console.error('Mail attachment upload failed:', uploadData);
-      continue;
+ 
+    const uploadText =
+      await uploadRes.text();
+ 
+    let uploadData: any = {};
+ 
+    try {
+      uploadData =
+        uploadText
+          ? JSON.parse(uploadText)
+          : {};
+    } catch {
+      uploadData = {
+        raw: uploadText,
+      };
     }
-
-    attachments.push({
-      storeName: info.storeName,
-      attachmentPath: info.attachmentPath,
-      attachmentName: fileName,
-    });
+ 
+    if (!uploadRes.ok) {
+      console.error(
+        `Attachment upload failed (${uploadRes.status}):`,
+        uploadData
+      );
+ 
+      throw new Error(
+        `Failed to upload attachment: ${fileName}`
+      );
+    }
+ 
+    console.log(
+      `Attachment upload response:`,
+      JSON.stringify(
+        uploadData,
+        null,
+        2
+      )
+    );
+ 
+    if (!uploadData.id) {
+      throw new Error(
+        `Zoho Desk upload did not return attachment ID for ${fileName}`
+      );
+    }
+ 
+    attachmentIds.push(
+      uploadData.id
+    );
+ 
+    console.log(
+      `Attachment uploaded: ${fileName} -> ${uploadData.id}`
+    );
   }
-
-  const sendRes = await fetch(
-    `${ZOHO_MAIL_API_DOMAIN}/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages`,
+ 
+  // ============================================================
+  // 2. Send email reply through Zoho Desk
+  // ============================================================
+ 
+  const replyUrl =
+    `${ZOHO_API_DOMAIN}/api/v1/tickets/${ticketId}/sendReply`;
+ 
+  console.log(
+    `Sending reply through Zoho Desk: ${replyUrl}`
+  );
+ 
+  const payload: any = {
+    channel: 'EMAIL',
+ 
+    to: to.join(','),
+ 
+    fromEmailAddress:
+      'support@wyse.co.in',
+ 
+    contentType: 'html',
+ 
+    content,
+ 
+    isForward: false,
+ 
+    attachmentIds,
+  };
+ 
+  if (cc && cc.length) {
+    payload.cc = cc.join(',');
+  }
+ 
+  console.log(
+    'Send reply payload:',
+    JSON.stringify(
+      {
+        ...payload,
+        content: '[email content]',
+      },
+      null,
+      2
+    )
+  );
+ 
+  const replyRes = await fetch(
+    replyUrl,
     {
       method: 'POST',
+ 
       headers: {
-        Authorization: `Zoho-oauthtoken ${accessToken}`,
-        'Content-Type': 'application/json',
+        Authorization:
+          `Zoho-oauthtoken ${accessToken}`,
+ 
+        'X-com-zoho-desk-organizationid':
+          ZOHO_ORG_ID,
+ 
+        'Content-Type':
+          'application/json',
+ 
+        Accept:
+          'application/json',
       },
-      body: JSON.stringify({
-        fromAddress: ZOHO_MAIL_FROM_ADDRESS,
-        toAddress,
-        subject,
-        content,
-        attachments,
-      }),
+ 
+      body:
+        JSON.stringify(payload),
     }
   );
-
-  const sendData: any = await sendRes.json();
-
-  if (!sendRes.ok) {
-    console.error('Send email failed:', sendData);
-    throw new Error('Failed to send email');
+ 
+  const replyText =
+    await replyRes.text();
+ 
+  let replyData: any = {};
+ 
+  try {
+    replyData =
+      replyText
+        ? JSON.parse(replyText)
+        : {};
+  } catch {
+    replyData = {
+      raw: replyText,
+    };
   }
-
-  console.log(`Email sent to ${toAddress}`);
-
-  return sendData;
+ 
+  if (!replyRes.ok) {
+ 
+    console.error(
+      `Zoho Desk sendReply failed (${replyRes.status}):`,
+      JSON.stringify(
+        replyData,
+        null,
+        2
+      )
+    );
+ 
+    throw new Error(
+      `Failed to send email through Zoho Desk (${replyRes.status})`
+    );
+  }
+ 
+  console.log(
+    `Email successfully sent to ${to.join(', ')}`
+  );
+ 
+  if (cc?.length) {
+    console.log(
+      `CC: ${cc.join(', ')}`
+    );
+  }
+ 
+  console.log(
+    `Attachments: ${attachmentIds.length}`
+  );
+ 
+  return replyData;
 }

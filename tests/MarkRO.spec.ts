@@ -20,59 +20,46 @@ async function navigateToMarkReportingOfficer(page: Page) {
 
 async function markReportingOfficer(
   page: Page,
-  employeeId: string,
-  employeeResultText: string
+  employeeId: string
 ) {
   await navigateToMarkReportingOfficer(page);
 
-  // Employee autocomplete — PrimeNG p-autocomplete backed by a real
-  // <input name="emp">. The dropdown button alone does not populate
-  // results; typing the employee ID triggers the search, and the
-  // matching name then appears as a clickable option.
   const employeeInput = page.locator('input[name="emp"]');
   await expect(employeeInput).toBeVisible();
   await employeeInput.click();
-  // pressSequentially simulates real keystrokes (keydown/keyup per
-  // character), which PrimeNG's autocomplete search listener needs to
-  // trigger — a plain fill() sets the value directly and does not
-  // reliably fire the search.
+
   await employeeInput.pressSequentially(employeeId, { delay: 100 });
 
-  // FIX: wait for the suggestions panel itself before searching inside
-  // it — the previous version searched the whole page for the option
-  // text immediately, before the panel had necessarily rendered, and
-  // the app has duplicate-name records elsewhere (two "Slok Jadhav"
-  // with different IDs), so matching by name alone is unreliable even
-  // when it does render. Match by employee ID (unique) scoped to the
-  // panel instead of by name scoped to the whole page.
   const panel = page.locator('.p-autocomplete-panel');
   await expect(panel).toBeVisible({ timeout: 15000 });
   const option = panel.getByText(employeeId, { exact: false }).first();
   await expect(option).toBeVisible({ timeout: 15000 });
   await option.click();
 
-  // The autocomplete results panel can remain open/overlapping the
-  // checkboxes right after selecting an option, which intercepts the
-  // next click before it reaches the checkbox. Press Escape to force
-  // the panel closed before interacting with anything below it.
   await page.keyboard.press('Escape');
   await panel.waitFor({ state: 'hidden' }).catch(() => {});
 
-  // NOTE: `.first()` here is carried over from the recording. There may
-  // be multiple checkboxes on screen (e.g. one per employee row) — worth
-  // confirming this is the intended one rather than always the first
-  // checkbox on the page.
-  const firstCheckbox = page.locator('.p-checkbox-box').first();
-  await expect(firstCheckbox).toBeVisible();
-  await expect(firstCheckbox).toBeEnabled();
-  await firstCheckbox.click();
-
-  // RO checkbox — scoped specifically to the #RO container, so this one
-  // is unambiguous regardless of how many other checkboxes exist.
+  // Only interact with the RO checkbox directly — do NOT click a generic
+  // "first checkbox" first, since on this screen it can resolve to the
+  // same DOM node as #RO and cause a check-then-uncheck toggle.
   const roCheckbox = page.locator('#RO > .p-checkbox > .p-checkbox-box');
   await expect(roCheckbox).toBeVisible();
   await expect(roCheckbox).toBeEnabled();
-  await roCheckbox.click();
+
+  // NOTE: confirm the actual "checked" class/attribute PrimeNG applies here
+  // by running `npx playwright codegen <login-url>` and inspecting the RO
+  // checkbox after checking it manually. Swap 'p-highlight' below if it
+  // differs (e.g. aria-checked="true").
+  const isChecked = await roCheckbox.evaluate((el) =>
+    el.classList.contains('p-highlight')
+  );
+
+  if (!isChecked) {
+    await roCheckbox.click();
+  }
+
+  // Confirm it actually ended up checked, not accidentally toggled off.
+  await expect(roCheckbox).toHaveClass(/p-highlight/);
 
   await page.getByRole('button', { name: 'Save' }).click();
 }
@@ -82,7 +69,7 @@ async function markReportingOfficer(
 test('eLMS Configuration - Mark Reporting Officer (RO)', async ({ page }) => {
   await login(page);
 
-  await markReportingOfficer(page, '500100127', '- Slok Jadhav');
+  await markReportingOfficer(page, '500100127');
 
   // TODO: replace with an actual success assertion once the save
   // confirmation (dialog/toast) text is confirmed. For example:

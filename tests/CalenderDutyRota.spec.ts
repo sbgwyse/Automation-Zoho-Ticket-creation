@@ -1,17 +1,22 @@
 import { test, expect, Page } from '@playwright/test';
 
-// ETAM PRIME - Duty Roster (Shift) automation
-// Refactored from raw codegen recording using the shared-helper pattern
-// established across the Upload / Employee Data Modification / Off Policy specs.
+// ETAM PRIME - Duty Roster (Shift + WeeklyOff) automation
+// Rebuilt directly from a fresh codegen recording. This recording is the
+// ground truth going forward for department/contractor selection: BOTH the
+// main Department filter and the Advance Filter Department/Contractor
+// panels are single-checkbox selections (position 1 in the list), NOT
+// multi-select-by-name. That's simpler than — and supersedes — the earlier
+// 3-named-department approach, which is the most likely cause of the
+// earlier hang on "Sales".
 //
-// This version adds: selecting multiple departments in the main filter,
-// selecting contractors by name (not just checkbox index) in the Advance
-// Filter, selecting multiple departments by label in the Advance Filter,
-// clicking a specific calendar day, Save Shift, and Delete Shift.
+// Every interaction has an explicit timeout so a genuinely stuck step fails
+// fast with a clear error instead of silently hanging until the whole
+// test's timeout kills it.
 
 test.use({ viewport: { width: 1600, height: 1000 } });
 
 const PAUSE_MS = 500;
+const ACTION_TIMEOUT = 15000;
 
 const BASE_URL = 'https://presence.tajhotels.com/etam_prime/login';
 const USERNAME = 'ADMIN/etam100';
@@ -26,218 +31,209 @@ async function login(page: Page) {
   await page.getByRole('textbox', { name: 'Password' }).fill(PASSWORD);
   // Submit via the button only — pressing Enter here as well double-submits
   // the form and collides with the ngx-ui-loader overlay from the first
-  // submission, which previously timed out against a detached button once
-  // the page had already navigated.
+  // submission.
   await page.getByRole('button', { name: 'Sign In' }).click();
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   await page.locator('ngx-ui-loader .ngx-overlay').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(PAUSE_MS);
 }
 
-async function closeResultDialogIfPresent(page: Page) {
-  const okButton = page.getByRole('button', { name: /^(OK|Ok|Close)$/ });
-  if (await okButton.isVisible().catch(() => false)) {
-    await okButton.click();
-    await page.waitForTimeout(PAUSE_MS);
-  }
-}
-
-// PrimeNG multiselect panels on this app render with appendTo="body",
-// so a second click on the trigger (or Escape) doesn't reliably close them.
-// A neutral click away from any panel is the fix that's held up across specs.
-async function closeOpenPanel(page: Page) {
-  await page.mouse.click(1400, 100);
-  await page.waitForTimeout(PAUSE_MS);
-}
-
-// Multiselect checkboxes here are sometimes momentarily covered by
-// transient overlays (p-sidebar-mask, ngx-ui-loader spinner). Wait those
-// out before clicking, and confirm the checkbox isn't genuinely disabled.
 async function waitForOverlaysGone(page: Page) {
   const loader = page.locator('.ngx-ui-loader');
-
   if (await loader.count()) {
-    await loader.first().waitFor({
-      state: 'hidden',
-      timeout: 10000
-    }).catch(() => {});
+    await loader.first().waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
   }
 }
 
-// Main Department filter: opens the multiselect and ticks the first N
-// checkboxes (recorded as three departments), then closes the panel.
-async function selectMainDepartments(page: Page, count: number) {
-  await page.getByText('--Select a Department--').click();
-  await waitForOverlaysGone(page);
-  const checkboxes = page.locator('.p-ripple > .p-checkbox > .p-checkbox-box');
-  for (let i = 0; i < count; i++) {
-    await expect(checkboxes.nth(i)).toBeEnabled();
-    await checkboxes.nth(i).click();
-  }
-  await closeOpenPanel(page);
-}
+// Scoped specifically to the "Result" confirmation dialog — the earlier
+// version used the first icon-only button ANYWHERE on the page, which could
+// (and did) click the wrong element, leaving the dialog's mask open and
+// silently blocking every click after it.
+async function closeResultDialogIfPresent(page: Page) {
+  const dialog = page.locator('p-dialog[header="Result"]').first();
 
-// Advance Filter -> Contractor: ticks the first checkbox, then selects
-// specific contractors by their visible name text.
-async function selectContractors(page: Page, contractorNames: string[]) {
-  console.log('STEP 1: Opening Contractor');
-
-  const sidebar = page.locator('.p-sidebar').last();
-
-  await expect(sidebar).toBeVisible({
-    timeout: 15000
-  });
-
-  console.log('STEP 2: Sidebar is visible');
-
-  const contractor = sidebar.getByText('Contractor', {
-    exact: true
-  }).first();
-
-  await expect(contractor).toBeVisible({
-    timeout: 15000
-  });
-
-  console.log('STEP 3: Contractor visible');
-
-  await contractor.click();
-
-  await page.waitForTimeout(500);
-
-  console.log('STEP 4: Contractor clicked');
-
-  const dropdown = sidebar.getByText(
-    '--Select a Contractor--',
-    {
-      exact: true
-    }
-  ).first();
-
-  await expect(dropdown).toBeVisible({
-    timeout: 15000
-  });
-
-  console.log('STEP 5: Contractor dropdown visible');
-
-  await dropdown.click();
-
-  await page.waitForTimeout(500);
-
-  console.log('STEP 6: Contractor dropdown opened');
-
-  for (const name of contractorNames) {
-    console.log(`STEP 7: Selecting ${name}`);
-
-    const option = page.getByText(name, {
-      exact: true
-    }).last();
-
-    await expect(option).toBeVisible({
-      timeout: 15000
-    });
-
-    await option.click();
-
-    await page.waitForTimeout(500);
+  if (!(await dialog.isVisible().catch(() => false))) {
+    return;
   }
 
-  console.log('STEP 8: Contractors selected');
+  const closeIcon = dialog.getByRole('button').filter({ hasText: /^$/ }).first();
 
-  await page.mouse.click(1000, 100);
-
-  await page.waitForTimeout(500);
-
-  console.log('STEP 9: Contractor panel closed');
-}
-// Advance Filter -> Department: selects specific departments by their
-// accessible label (as recorded), rather than by checkbox index.
-async function selectAdvanceFilterDepartments(page: Page, departmentLabels: string[]) {
-  await page.getByText('--Select a Department--').click();
-  await waitForOverlaysGone(page);
-
-  for (const label of departmentLabels) {
-    await page.getByLabel(label).getByText(label).click();
+  if (await closeIcon.isVisible().catch(() => false)) {
+    await closeIcon.click({ timeout: ACTION_TIMEOUT });
+  } else {
+    // Fallback if the dialog's own close icon isn't found for some reason.
+    await page.keyboard.press('Escape').catch(() => {});
   }
 
-  // Icon-only close button on the department multiselect panel.
-  await page.getByRole('button').filter({ hasText: /^$/ }).nth(1).click();
-}
-async function applyAdvanceFilter(page: Page, contractorNames: string[], departmentLabels: string[]) {
-  // Wait out any overlay from the preceding department multiselect close
-  // before touching Advance Filter — clicking through an overlay is a
-  // silent no-op rather than a thrown error, which is why this step can
-  // appear to "do nothing".
-  await waitForOverlaysGone(page);
-  const advanceFilterTrigger = page.getByText('Advance Filter', { exact: true });
-  await expect(advanceFilterTrigger).toBeVisible();
-  await advanceFilterTrigger.scrollIntoViewIfNeeded();
-  await advanceFilterTrigger.click();
-  await waitForOverlaysGone(page);
+  await page
+    .locator('.p-dialog-mask')
+    .first()
+    .waitFor({ state: 'hidden', timeout: ACTION_TIMEOUT })
+    .catch(() => {});
 
-  await selectContractors(page, contractorNames);
-  await selectAdvanceFilterDepartments(page, departmentLabels);
-
-  // A further standalone checkbox in the Advance Filter sidebar (recorded
-  // as index 1) — confirm it isn't disabled before clicking.
-  const extraCheckbox = page.getByRole('checkbox').nth(1);
-  await expect(extraCheckbox).toBeEnabled();
-  await extraCheckbox.click();
-
-  await page.getByRole('button', { name: 'Done' }).click();
   await page.waitForTimeout(PAUSE_MS);
 }
 
-// Selects an employee by ID (grid cell), dismisses the loading overlay
-// that appears after selection, clicks the target calendar day, then
-// saves the shift and dismisses the resulting confirmation dialog.
-async function assignShiftAndSelectDay(page: Page, employeeId: string) {
-  const cell = page.getByRole('cell', { name: employeeId });
-  await expect(cell).toBeVisible();
-  await cell.click();
-
-  const overlay = page.locator('.ngx-overlay').first();
-  if (await overlay.isVisible().catch(() => false)) {
-    await overlay.click();
-    await overlay.waitFor({ state: 'hidden' }).catch(() => {});
-  }
-
-  // Structural locator taken directly from codegen — pinned to the 3rd row
-  // / 3rd cell of the currently-rendered month view. This is fragile
-  // across different months/years (the 3rd cell of the 3rd row won't
-  // always be the intended date); worth swapping for a locator scoped by
-  // the visible day-of-month text if this spec is reused for other months.
-  await page
-    .locator(
-      'div:nth-child(2) > div > mwl-calendar-month-view > .cal-month-view > .cal-days > div:nth-child(3) > .cal-cell-row > mwl-calendar-month-cell:nth-child(3) > .cal-cell-top'
-    )
-    .click();
-
-  await page.getByRole('button', { name: 'Save Shift' }).click();
-  // Icon-only close button on the post-save confirmation dialog.
-  await page.getByRole('button').filter({ hasText: /^$/ }).click();
+async function navigateToDutyRoster(page: Page) {
+  await page.getByText('REGISTRATION').click({ timeout: ACTION_TIMEOUT });
+  await page.getByRole('combobox').selectOption('Duty Roster');
+  await page.waitForTimeout(PAUSE_MS);
 }
 
-// ---------- Test ----------
+// Main Department filter: opens the multiselect, ticks the first checkbox,
+// closes via the (first, un-indexed) icon-only close button — matches the
+// confirmed recording exactly.
+async function selectMainDepartment(page: Page) {
+  console.log('STEP: Opening main Department filter');
+  await page.getByText('--Select a Department--').click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Selecting first department checkbox');
+  await page.getByRole('checkbox').nth(1).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Closing main Department panel');
+  await page.getByRole('button').filter({ hasText: /^$/ }).click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+}
+
+// Advance Filter: Contractor + Department, each a single-checkbox
+// selection, plus the trailing standalone checkbox and Done.
+async function applyAdvanceFilter(page: Page) {
+  console.log('STEP: Opening Advance Filter');
+  await page.getByText('Advance Filter').click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Opening Contractor');
+  await page.getByText('Contractor').click({ timeout: ACTION_TIMEOUT });
+  await page.getByText('--Select a Contractor--').click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Selecting first contractor checkbox');
+  await page.getByRole('checkbox').nth(1).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Closing Contractor panel');
+  await page.getByRole('button').filter({ hasText: /^$/ }).nth(1).click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Opening Advance Filter Department');
+  await page.getByText('--Select a Department--').click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Selecting first department checkbox (Advance Filter)');
+  await page.getByRole('checkbox').nth(1).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Closing Advance Filter Department panel');
+  await page.getByRole('button').filter({ hasText: /^$/ }).nth(1).click({ timeout: ACTION_TIMEOUT });
+  await waitForOverlaysGone(page);
+
+  console.log('STEP: Clicking trailing standalone checkbox');
+  const extraCheckbox = page.getByRole('checkbox').nth(1);
+  await expect(extraCheckbox).toBeEnabled({ timeout: ACTION_TIMEOUT });
+  await extraCheckbox.click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Clicking Done');
+  await page.getByRole('button', { name: 'Done' }).click({ timeout: ACTION_TIMEOUT });
+  await page.waitForTimeout(PAUSE_MS);
+}
+
+// ---------- Tests ----------
 
 test('Duty Roster - assign and delete Shift', async ({ page }) => {
   await login(page);
-
-  await page.getByText('REGISTRATION').click();
-  await page.getByRole('combobox').selectOption('Duty Roster');
+  await navigateToDutyRoster(page);
 
   await page.locator('select[name="month"]').selectOption('July');
   await page.locator('select[name="selectedType"]').selectOption('Shift');
+
+  await selectMainDepartment(page);
+  await applyAdvanceFilter(page);
+
+  console.log('STEP: Selecting employee Smita Joshi');
+  await page.getByRole('cell', { name: 'Smita Joshi' }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Setting Remark to ShiftB');
   await page.getByLabel('Remark').selectOption('ShiftB');
 
-  // Main Department filter (multiselect) — three departments recorded
-  await selectMainDepartments(page, 3);
+  console.log('STEP: Saving Shift');
+  await page.getByRole('button', { name: 'Save Shift' }).click({ timeout: ACTION_TIMEOUT });
+  await closeResultDialogIfPresent(page);
 
-  // Advance Filter: Contractor (by name) + Department (by label)
-  await applyAdvanceFilter(page, ['John S', 'Michel Doe'], ['Food & Beverage', 'Engineering', 'Sales']);
+  console.log('STEP: Deleting Shift (first pass)');
+  await page.getByRole('button', { name: 'Delete Shift' }).click({ timeout: ACTION_TIMEOUT });
 
-  // Assign shift: select employee, pick calendar day, save
-  await assignShiftAndSelectDay(page, '500100444');
+  console.log('STEP: Selecting employee 100100111 and deleting Shift again');
+  await page.getByRole('cell', { name: '100100111' }).click({ timeout: ACTION_TIMEOUT });
+  await page.getByRole('button', { name: 'Delete Shift' }).click({ timeout: ACTION_TIMEOUT });
+});
 
-  // Recorded as a follow-on action in the same flow
-  await page.getByRole('button', { name: 'Delete Shift' }).click();
+test('Duty Roster - assign WeeklyOff', async ({ page }) => {
+  await login(page);
+  await navigateToDutyRoster(page);
+
+  await page.locator('select[name="month"]').selectOption('July');
+  await page.locator('select[name="selectedType"]').selectOption('WeeklyOff');
+
+  // NOTE: the original recording didn't include these filter steps here
+  // because it ran right after the Shift flow in the same session, so the
+  // filters were already applied. This test starts fresh, so the employee
+  // grid is empty until the same filters are applied here too.
+  await selectMainDepartment(page);
+  await applyAdvanceFilter(page);
+
+  console.log('STEP: Selecting employee 100100111');
+  await page.getByRole('cell', { name: '100100111' }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Clicking calendar day "6 P" (first)');
+  await page.getByText('6 P', { exact: true }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Setting Remark to Additional Off');
+  await page.getByLabel('Remark').selectOption('Additional Off');
+
+  console.log('STEP: Clicking calendar day "6 P" (second)');
+  await page.getByText('6 P', { exact: true }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Saving WeeklyOff');
+  await page.getByRole('button', { name: 'Save Weeklyoff' }).click({ timeout: ACTION_TIMEOUT });
+  await closeResultDialogIfPresent(page);
+
+  // TODO: the recording continues into a second WeeklyOff attempt here —
+  // re-selects July, clicks employee 100100111, re-selects WeeklyOff type,
+  // clicks employee 100100111 twice more, and sets Remark to
+  // 'Variable Weekly Off' — but the recording ends there with no Save
+  // click captured, so it's not clear if this is a genuine second save or
+  // an incomplete/duplicate recording of the same action. Left out until
+  // confirmed by a fresh, complete recording of that specific flow.
+});
+
+test('Duty Roster - assign and delete Off Policy', async ({ page }) => {
+  await login(page);
+  await navigateToDutyRoster(page);
+
+  await page.locator('select[name="month"]').selectOption('March');
+  await page.locator('select[name="selectedType"]').selectOption('Off Policy');
+
+  // Off Policy uses the same Department/Advance Filter setup as Shift —
+  // apply it fresh here, same as the fix applied to the WeeklyOff test above.
+  await selectMainDepartment(page);
+  await applyAdvanceFilter(page);
+
+  console.log('STEP: Setting Remark to 7-FRI');
+  await page.getByLabel('Remark').selectOption('7-FRI');
+
+  console.log('STEP: Selecting employee 100100111');
+  await page.getByRole('cell', { name: '100100111' }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Setting Remark to 10-1SAT');
+  await page.getByLabel('Remark').selectOption('10-1SAT');
+
+  console.log('STEP: Saving Off Policy');
+  await page.getByRole('button', { name: 'Save Off Policy' }).click({ timeout: ACTION_TIMEOUT });
+  await closeResultDialogIfPresent(page);
+
+  console.log('STEP: Deleting Off Policy (first pass)');
+  await page.getByRole('button', { name: 'Delete Off Policy' }).click({ timeout: ACTION_TIMEOUT });
+
+  console.log('STEP: Selecting employee 100100111 and deleting Off Policy again');
+  await page.getByRole('cell', { name: '100100111' }).click({ timeout: ACTION_TIMEOUT });
+  await page.getByRole('button', { name: 'Delete Off Policy' }).click({ timeout: ACTION_TIMEOUT });
 });

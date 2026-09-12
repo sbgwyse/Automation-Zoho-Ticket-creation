@@ -33,11 +33,15 @@ import {
   StepRecord,
   AttachmentRecord,
   ReportMeta,
-  buildFileDate,
-  generatePdfReport,
-  generateExcelReport,
-} from './reportBuilder';
+} from './reporters/reportBuilder';
+import { toStyledReport } from './reporters/reportAdapter';
+import { writeExcelReport } from './reporters/excelReporter';
+import { writePdfReport } from './reporters/pdfReporter';
 import { createTicket, uploadFile as uploadFileToZoho, getAgentIdByEmail } from './zoho-helper';
+
+const STYLED_REPORT_DIR = 'TestResults';
+const STYLED_PDF_PATH = path.join(STYLED_REPORT_DIR, 'Automation_Report.pdf');
+const STYLED_EXCEL_PATH = path.join(STYLED_REPORT_DIR, 'Automation_Report.xlsx');
 
 export default class CustomReport implements Reporter {
   private records: TestRecord[] = [];
@@ -106,16 +110,15 @@ export default class CustomReport implements Reporter {
       return;
     }
 
-    const date = new Date();
-    const fileDate = buildFileDate(date);
+    const { meta, results } = toStyledReport(this.records);
 
-    const pdfPath = await generatePdfReport(this.records, date, outDir, fileDate);
-    const excelPath = await generateExcelReport(this.records, outDir, fileDate);
+    await writeExcelReport(results, meta);
+    await writePdfReport(results, meta);
 
-    console.log('Report generated:', pdfPath, excelPath);
+    console.log('Report generated:', STYLED_PDF_PATH, STYLED_EXCEL_PATH);
 
     if (process.env.CREATE_TICKET === 'true') {
-      await this.createZohoTicket(pdfPath, excelPath);
+      await this.createZohoTicket(STYLED_PDF_PATH, STYLED_EXCEL_PATH);
     }
   }
 

@@ -11,7 +11,7 @@ const RED = 'FFC00000';
 
 const COL_COUNT = 4; // Form/Field | Status | Duration (s) | Error
 
-export async function writeExcelReport(results: StepResult[], meta: ReportMeta, fileName: string = 'Automation_Report') {
+export async function writeExcelReport(results: StepResult[], meta: ReportMeta) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Automation Report');
 
@@ -94,5 +94,5 @@ export async function writeExcelReport(results: StepResult[], meta: ReportMeta, 
   const folder = path.join(process.cwd(), 'TestResults');
   if (!fs.existsSync(folder)) fs.mkdirSync(folder);
 
-  await workbook.xlsx.writeFile(path.join(folder, `${fileName}.xlsx`));
+  await workbook.xlsx.writeFile(path.join(folder, 'Automation_Report.xlsx'));
 }

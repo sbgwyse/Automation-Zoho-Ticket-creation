@@ -2,6 +2,13 @@ import fetch from 'node-fetch';
 import 'dotenv/config';
 import FormData from 'form-data';
 import fs from 'fs';
+import {
+  getTicket,
+  getAccessToken,
+  replyToTicket
+} 
+from './fetch-ticket';
+
 export async function getAgentIdByEmail(email: string): Promise<string> {
   const response = await fetch(
     `https://desk.zoho.in/api/v1/agents?searchStr=${encodeURIComponent(email)}`,
@@ -53,13 +60,15 @@ export async function createTicket(
     if (assigneeId) {
         body.assigneeId = assigneeId;
     }
-
+    const accessToken =
+        await getAccessToken();
+        console.log(`Access Token use for creating ticket: ${accessToken}`);
     const response = await fetch(
         "https://desk.zoho.in/api/v1/tickets",
         {
             method: "POST",
             headers: {
-                Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+                Authorization: `Zoho-oauthtoken ${accessToken}`,
                 "X-com-zoho-desk-organizationid": process.env.ZOHO_ORG_ID!,
                 "Content-Type": "application/json",
             },
@@ -85,13 +94,14 @@ export async function uploadFile(file: string): Promise<string> {
     const form = new FormData();
 
     form.append("file", fs.createReadStream(file));
-
+    const accessToken =
+        await getAccessToken();
     const response = await fetch(
         "https://desk.zoho.in/api/v1/uploads",
         {
             method: "POST",
             headers: {
-                Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+                Authorization: `Zoho-oauthtoken ${accessToken}`,
                 "X-com-zoho-desk-organizationid": `${process.env.ZOHO_ORG_ID}`,
                 ...form.getHeaders()
             },
@@ -113,7 +123,7 @@ export async function getTicketByNumber(ticketNumber: string): Promise<any> {
     `https://desk.zoho.in/api/v1/tickets/search?ticketNumber=${encodeURIComponent(ticketNumber)}`,
     {
       headers: {
-        Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+        Authorization: `Zoho-oauthtoken ${await getAccessToken()}`,
         'X-com-zoho-desk-organizationid': process.env.ZOHO_ORG_ID!,
       },
     },
@@ -139,7 +149,7 @@ export async function getTicketById(ticketId: string): Promise<any> {
     `https://desk.zoho.in/api/v1/tickets/${ticketId}`,
     {
       headers: {
-        Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+        Authorization: `Zoho-oauthtoken ${await getAccessToken()}`,
         'X-com-zoho-desk-organizationid': process.env.ZOHO_ORG_ID!,
       },
     },
@@ -164,7 +174,7 @@ export async function addCommentToTicket(
     {
       method: 'POST',
       headers: {
-        Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+        Authorization: `Zoho-oauthtoken ${await getAccessToken()}`,
         'X-com-zoho-desk-organizationid': process.env.ZOHO_ORG_ID!,
         'Content-Type': 'application/json',
       },
@@ -198,7 +208,7 @@ export async function attachFileToTicket(ticketId: string, file: string): Promis
     {
       method: 'POST',
       headers: {
-        Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}`,
+        Authorization: `Zoho-oauthtoken ${await getAccessToken()}`,
         'X-com-zoho-desk-organizationid': `${process.env.ZOHO_ORG_ID}`,
         ...form.getHeaders(),
       },

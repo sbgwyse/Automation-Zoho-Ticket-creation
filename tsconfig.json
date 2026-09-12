@@ -9,7 +9,8 @@
     "resolveJsonModule": true,
     "outDir": "dist",
     "types": ["node"],
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "6.0"
   },
   "exclude": ["node_modules", "dist"]
+
 }

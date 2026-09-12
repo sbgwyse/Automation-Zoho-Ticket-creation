@@ -9,12 +9,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import {
-  TestRecord,
-  buildFileDate,
-  generatePdfReport,
-  generateExcelReport,
-} from './reportBuilder';
+import { TestRecord } from './reporters/reportBuilder';
+import { toStyledReport } from './reporters/reportAdapter';
+import { writeExcelReport } from './reporters/excelReporter';
+import { writePdfReport } from './reporters/pdfReporter';
+
+const STYLED_PDF_PATH = path.join('TestResults', 'Automation_Report.pdf');
+const STYLED_EXCEL_PATH = path.join('TestResults', 'Automation_Report.xlsx');
 
 async function main() {
   const recordsPath = path.join('test-results', 'last-run-records.json');
@@ -28,14 +29,12 @@ async function main() {
 
   const records: TestRecord[] = JSON.parse(fs.readFileSync(recordsPath, 'utf-8'));
 
-  const outDir = 'test-results';
-  const date = new Date();
-  const fileDate = buildFileDate(date);
+  const { meta, results } = toStyledReport(records);
 
-  const pdfPath = await generatePdfReport(records, date, outDir, fileDate);
-  const excelPath = await generateExcelReport(records, outDir, fileDate);
+  await writeExcelReport(results, meta);
+  await writePdfReport(results, meta);
 
-  console.log('Report generated:', pdfPath, excelPath);
+  console.log('Report generated:', STYLED_PDF_PATH, STYLED_EXCEL_PATH);
 }
 
 main().catch((err) => {

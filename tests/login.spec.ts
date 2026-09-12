@@ -1,47 +1,82 @@
 import { test, expect } from '@playwright/test';
-import fs from 'fs';
+import dotenv from 'dotenv';
+import { LoginPage } from '../pages/LoginPage';
 
-test('Cluster HR Upload - Download Format With Data', async ({ page }) => {
+dotenv.config();
 
-  // Login
-  await page.goto('http://192.168.0.23:4220/etam_prime_taj/login');
+const validUsername = process.env.ETAM_USERNAME;
+const validPassword = process.env.ETAM_PASSWORD;
 
-  await page.getByPlaceholder('Username').fill('ADMIN/Wyse');
-  await page.getByPlaceholder('Password').fill('$WysE123');
 
-  await page.getByRole('button', { name: /sign in/i }).click();
+if (!validUsername || !validPassword) {
+  throw new Error(
+    `ETAM_USERNAME or ETAM_PASSWORD is missing from the .env file.\n` +
+    `Resolved cwd: ${process.cwd()}\n` +
+    `ETAM_USERNAME present: ${!!validUsername}, ETAM_PASSWORD present: ${!!validPassword}\n` +
+    `Make sure a .env file exists at the project root (same folder as playwright.config.ts) ` +
+    `with lines like:\n  ETAM_USERNAME=your_username\n  ETAM_PASSWORD=your_password`
+  );
+}
 
-  // Wait for dashboard
-  await page.waitForLoadState('networkidle');
+test.describe('Login', () => {
 
-  // Click CLUSTER HR UPLOAD from left menu
-  await page.getByText('CLUSTER HR UPLOAD', { exact: false }).click();
-
-  // Wait for page to load
-  await page.waitForTimeout(3000);
-
-  // Start download listener
-  const downloadPromise = page.waitForEvent('download', {
-    timeout: 60000
+  test.beforeEach(async ({ page }) => {
+    const loginPage = new LoginPage(page);
+    await loginPage.goto();
   });
 
-  // Click Download Format With Data
-  await page.getByText('DOWNLOAD FORMAT WITH DATA', {
-    exact: false
-  }).click();
+  test.describe('Validation errors', () => {
 
-  const download = await downloadPromise;
+    test('shows an error when username is empty', async ({ page }) => {
+      const loginPage = new LoginPage(page);
 
-  // Create downloads folder
-  if (!fs.existsSync('downloads')) {
-    fs.mkdirSync('downloads');
-  }
+      await loginPage.fillUsername('');
+      await loginPage.fillPassword(validPassword);
+      await loginPage.submit();
 
-  const filePath = `downloads/${download.suggestedFilename()}`;
+      // TODO: replace with the actual validation message / locator ETAM shows
+      await expect(page.getByText(/username.*required/i)).toBeVisible();
+    });
 
-  await download.saveAs(filePath);
+    test('shows an error when password is empty', async ({ page }) => {
+      const loginPage = new LoginPage(page);
 
-  console.log('Downloaded:', filePath);
+      await loginPage.fillUsername(validUsername);
+      await loginPage.fillPassword('');
+      await loginPage.submit();
 
-  expect(fs.existsSync(filePath)).toBeTruthy();
+      // TODO: replace with the actual validation message / locator ETAM shows
+      await expect(page.getByText(/password.*required/i)).toBeVisible();
+    });
+
+  });
+
+  test.describe('Wrong credentials', () => {
+
+    test('rejects an incorrect username', async ({ page }) => {
+      const loginPage = new LoginPage(page);
+
+      await loginPage.login(
+        'wrong_username',
+        validPassword
+      );
+
+      // TODO: replace with the actual "invalid credentials" message ETAM shows
+      await expect(page.getByText(/invalid.*(username|credentials)/i)).toBeVisible();
+    });
+
+  });
+
+  test('successful login', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+
+    await loginPage.login(
+      validUsername,
+      validPassword
+    );
+
+    // TODO: replace with the real post-login URL or dashboard element
+    await expect(page).toHaveURL(/dashboard/i);
+  });
+
 });
